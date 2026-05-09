@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kopilot-core"
+version = "0.1.0"
+description = "Kopilot automation framework — bus, scheduler, runtime"
+requires-python = ">=3.11"
+dependencies = [
+    "anyio>=4.0",
+    "nats-py>=2.6",
+    "apscheduler>=3.10",
+    "mysql-connector-python>=8.0",
+    "python-dotenv>=1.0",
+]
