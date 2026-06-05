@@ -1,6 +1,8 @@
+import itertools
 import logging
+import math
 from contextlib import contextmanager
-from typing import Optional
+from typing import List, Optional
 
 from mysql.connector import Error
 from mysql.connector.pooling import MySQLConnectionPool
@@ -8,25 +10,49 @@ from anyio import to_thread, Semaphore
 
 logger = logging.getLogger("mysql")
 
+MAX_POOL_SIZE = 32  # mysql-connector-python hard cap per pool
+
 
 class MySQL:
-    _pool: Optional[MySQLConnectionPool] = None
+    _pools: List[MySQLConnectionPool] = []
+    _pool_cycle = None
     _semaphore: Semaphore = Semaphore(5)
     _cfg: dict = {}
 
     @classmethod
     def configure(cls, **cfg):
         cls._cfg.update(cfg)
-        cls._semaphore = Semaphore(cls._cfg.get("pool_size", 5))
+        total = cls._cfg.get("pool_size", 5)
+        cls._semaphore = Semaphore(total)
+
+    @classmethod
+    def _build_pools(cls):
+        if not cls._cfg:
+            raise RuntimeError("MySQL not configured. Call db.configure(**cfg) first.")
+
+        total = cls._cfg.get("pool_size", 5)
+        n_pools = math.ceil(total / MAX_POOL_SIZE)
+        per_pool = math.ceil(total / n_pools)
+        base_name = cls._cfg.get("pool_name", "kopilot")
+        base_cfg = {k: v for k, v in cls._cfg.items() if k not in ("pool_name", "pool_size")}
+
+        cls._pools = []
+        for i in range(n_pools):
+            pool_cfg = {**base_cfg, "pool_name": f"{base_name}_{i}", "pool_size": per_pool}
+            cls._pools.append(MySQLConnectionPool(**pool_cfg))
+
+        cls._pool_cycle = itertools.cycle(cls._pools)
+        logger.info(
+            "Initialized %d MySQL pool(s) of %d connections each (%d total)",
+            n_pools, per_pool, n_pools * per_pool,
+        )
 
     @classmethod
     def _get_pool(cls) -> MySQLConnectionPool:
-        if cls._pool is None:
-            if not cls._cfg:
-                raise RuntimeError("MySQL not configured. Call db.configure(**cfg) first.")
-            cls._pool = MySQLConnectionPool(**cls._cfg)
-        return cls._pool
-    
+        if not cls._pools:
+            cls._build_pools()
+        return next(cls._pool_cycle)
+
     @classmethod
     @contextmanager
     def connection(cls):
