@@ -15,3 +15,4 @@ build/
 .env
 *.log
 TODO.md
+**/.claude
