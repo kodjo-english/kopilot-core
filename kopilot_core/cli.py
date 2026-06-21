@@ -77,5 +77,64 @@ def query_main():
     print(json.dumps(rows, default=_json_default, indent=indent))
 
 
+def shell_main():
+    parser = argparse.ArgumentParser(
+        prog="kopilot-shell",
+        description="Interactive shell with kopilot db preconfigured from .env",
+    )
+    parser.add_argument("--ro", action="store_true", help="Use MYSQL_RO_USER (read-only)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="DEBUG logging")
+    parser.add_argument("--quiet", "-q", action="store_true", help="WARNING logging only")
+    args = parser.parse_args()
+
+    load_dotenv()
+
+    user_var = "MYSQL_RO_USER" if args.ro else "MYSQL_USER"
+    pass_var = "MYSQL_RO_PASSWORD" if args.ro else "MYSQL_PASSWORD"
+
+    mysql_cfg = {
+        "host":     os.environ.get("MYSQL_HOST"),
+        "user":     os.environ.get(user_var),
+        "password": os.environ.get(pass_var),
+        "database": os.environ.get("MYSQL_DATABASE"),
+        "pool_size": int(os.environ.get("MYSQL_POOL_SIZE", "5")),
+    }
+
+    missing = [k for k, v in mysql_cfg.items() if v is None]
+    if missing:
+        print(
+            f"Missing config: {', '.join(missing)}. "
+            f"Set MYSQL_HOST, {user_var}, {pass_var}, MYSQL_DATABASE in .env",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    from kopilot_core import db, nc, sch
+    import logging
+
+    db.configure(**mysql_cfg)
+    
+    level = logging.DEBUG if args.verbose else (logging.WARNING if args.quiet else logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s %(asctime)s %(name)s %(message)s",
+    )
+
+    mode = "READ-ONLY" if args.ro else "READ-WRITE"
+    banner = (
+        f"\nkopilot-shell — {mysql_cfg['host']}/{mysql_cfg['database']} "
+        f"as {mysql_cfg['user']} ({mode})\n"
+    )
+
+    namespace = {"db": db, "nc": nc, "sch": sch}
+
+    try:
+        from IPython import embed
+        embed(user_ns=namespace, banner1=banner, colors="Linux")
+    except ImportError:
+        import code
+        print("IPython not installed; plain REPL (no top-level await).", file=sys.stderr)
+        code.interact(local=namespace, banner=banner)
+
 if __name__ == "__main__":
     query_main()
