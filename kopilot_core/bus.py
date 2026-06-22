@@ -212,8 +212,13 @@ class NATSServer:
                 await msg.nak()
                 logger.error(f"NAK {subject} (attempt {delivered}): {e}", exc_info=True)
 
+    def _ensure_connected(self):
+        if self._connection is None:
+            raise RuntimeError("NATS not connected — call `await nc.connect()` first.")
+
     async def jpub(self, subject: str, data: dict, msg_id: Optional[str] = None):
         """Publish to the durable lane. Pass msg_id for publisher-side dedup."""
+        self._ensure_connected()
         if self._js is None:
             self._js = self._connection.jetstream()
         await self._ensure_stream(subject)
@@ -223,11 +228,13 @@ class NATSServer:
         await self._js.publish(subject, message, headers=headers)
 
     async def pub(self, subject: str, data: dict):
+        self._ensure_connected()
         message = json.dumps(data).encode()
         logger.info(f"PUB {subject} {len(message)}b")
         await self._connection.publish(subject, message)
 
     async def request(self, subject: str, data: dict, timeout: int = 5):
+        self._ensure_connected()
         message = json.dumps(data).encode()
         logger.info(f"REQ-OUT {subject} {len(message)}b")
         response = await self._connection.request(subject, message, timeout=timeout)

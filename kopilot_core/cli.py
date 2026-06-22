@@ -113,7 +113,13 @@ def shell_main():
     import logging
 
     db.configure(**mysql_cfg)
-    
+    nc.configure(
+        servers=os.environ.get("NATS_URL"),
+        name="kopilot_shell",
+        reconnect_time_wait=2,
+        max_reconnect_attempts=10,
+    )
+
     level = logging.DEBUG if args.verbose else (logging.WARNING if args.quiet else logging.INFO)
     logging.basicConfig(
         level=level,
@@ -124,13 +130,17 @@ def shell_main():
     banner = (
         f"\nkopilot-shell — {mysql_cfg['host']}/{mysql_cfg['database']} "
         f"as {mysql_cfg['user']} ({mode})\n"
+        "db is ready. For the bus, first:  await nc.connect()  "
+        "then nc.pub / nc.jpub / nc.request\n"
     )
 
     namespace = {"db": db, "nc": nc, "sch": sch}
 
     try:
-        from IPython import embed
-        embed(user_ns=namespace, banner1=banner, colors="Linux")
+        from IPython.terminal.embed import InteractiveShellEmbed
+        shell = InteractiveShellEmbed(user_ns=namespace, banner1=banner, colors="Linux")
+        shell.run_line_magic("autoawait", "asyncio")
+        shell()
     except ImportError:
         import code
         print("IPython not installed; plain REPL (no top-level await).", file=sys.stderr)
