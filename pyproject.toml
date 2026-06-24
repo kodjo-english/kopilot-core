@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kopilot-core"
-version = "0.6.0"
+version = "0.6.2"
 description = "Kopilot automation framework — bus, scheduler, runtime"
 requires-python = ">=3.11"
 dependencies = [

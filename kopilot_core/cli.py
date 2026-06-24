@@ -89,6 +89,11 @@ def shell_main():
 
     load_dotenv()
 
+    # Console-script entry points don't put cwd on sys.path (unlike `python -m`
+    # or `python file.py`). Add it so the shell can import the repo's local
+    # packages — services, common, modules.<name> — from the repo root.
+    sys.path.insert(0, os.getcwd())
+
     user_var = "MYSQL_RO_USER" if args.ro else "MYSQL_USER"
     pass_var = "MYSQL_RO_PASSWORD" if args.ro else "MYSQL_PASSWORD"
 
