@@ -1,4 +1,6 @@
 import argparse
+import ast
+import inspect
 import json
 import os
 import sys
@@ -150,6 +152,81 @@ def shell_main():
         import code
         print("IPython not installed; plain REPL (no top-level await).", file=sys.stderr)
         code.interact(local=namespace, banner=banner)
+
+
+def script_main():
+    parser = argparse.ArgumentParser(
+        prog="kopilot-script",
+        description="Run a dev Python script with db preconfigured and the repo "
+                    "importable (services/common/modules). NATS is not connected.",
+    )
+    parser.add_argument("script", help="path to the .py script to run")
+    parser.add_argument("args", nargs=argparse.REMAINDER,
+                        help="arguments passed through to the script (as sys.argv)")
+    parsed = parser.parse_args()
+
+    load_dotenv()
+
+    # Console-script entry points don't put cwd on sys.path (unlike `python -m` or
+    # `python file.py`). Add it so the script can import the repo's local packages —
+    # services, common, modules.<name> — from the repo root. (Same as shell_main.)
+    sys.path.insert(0, os.getcwd())
+
+    mysql_cfg = {
+        "host":     os.environ.get("MYSQL_HOST"),
+        "user":     os.environ.get("MYSQL_USER"),
+        "password": os.environ.get("MYSQL_PASSWORD"),
+        "database": os.environ.get("MYSQL_DATABASE"),
+        "pool_size": int(os.environ.get("MYSQL_POOL_SIZE", "5")),
+    }
+    missing = [k for k, v in mysql_cfg.items() if v is None]
+    if missing:
+        print(
+            f"Missing config: {', '.join(missing)}. "
+            "Set MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE in .env",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    path = parsed.script
+    if not os.path.isfile(path):
+        print(f"No such script: {path}", file=sys.stderr)
+        sys.exit(2)
+
+    from kopilot_core import db
+    import logging
+
+    db.configure(**mysql_cfg)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s %(asctime)s %(name)s %(message)s",
+    )
+    # NATS is intentionally NOT configured/connected. `nc` stays importable, but
+    # calling it raises a clear "not connected" error — scripts get db + services,
+    # not the bus.
+
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+
+    # Hand the script its own argv, then run it with top-level `await` support so
+    # the body can call `await db.aexecute_*` / service coroutines without an
+    # `async def main()` wrapper (mirrors kopilot-shell's autoawait). A script with
+    # no top-level await — sync `db.execute_*`, or one that calls anyio.run itself —
+    # just execs normally.
+    sys.argv = [path, *parsed.args]
+    ns = {"__name__": "__main__", "__file__": os.path.abspath(path)}
+    code = compile(src, path, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
+
+    if code.co_flags & inspect.CO_COROUTINE:
+        import anyio
+
+        async def _run():
+            await eval(code, ns)
+
+        anyio.run(_run)
+    else:
+        exec(code, ns)
+
 
 if __name__ == "__main__":
     query_main()
