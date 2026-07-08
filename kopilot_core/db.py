@@ -1,6 +1,7 @@
 import itertools
 import logging
 import math
+import threading
 from contextlib import contextmanager
 from typing import List, Optional
 
@@ -16,6 +17,7 @@ MAX_POOL_SIZE = 32  # mysql-connector-python hard cap per pool
 class MySQL:
     _pools: List[MySQLConnectionPool] = []
     _pool_cycle = None
+    _pool_lock = threading.Lock()   # itertools.cycle isn't thread-safe; guard the round-robin
     _semaphore: Semaphore = Semaphore(5)
     _cfg: dict = {}
 
@@ -49,9 +51,13 @@ class MySQL:
 
     @classmethod
     def _get_pool(cls) -> MySQLConnectionPool:
-        if not cls._pools:
-            cls._build_pools()
-        return next(cls._pool_cycle)
+        # Runs in to_thread worker threads (via aexecute_*), so both the lazy build
+        # and next(_pool_cycle) must be serialized. The lock covers only the cheap
+        # round-robin pick; the blocking pool.get_connection() stays outside it.
+        with cls._pool_lock:
+            if not cls._pools:
+                cls._build_pools()
+            return next(cls._pool_cycle)
 
     @classmethod
     @contextmanager
